@@ -105,6 +105,13 @@ class MainViewModel(
     constructor(app: Application) : this(app, SecureStore(app), online = true, archive = SvmArchive(java.io.File(app.filesDir, "svm")))
 
     private val api = BluelinkClient(store)
+    /** Hyundai USA client (different backend); used instead of [api] when the brand is HYUNDAI_USA. */
+    private val usa = io.github.alamo3.openblue.api.UsaBluelinkClient(store)
+    val isUs: Boolean get() = store.brand == io.github.alamo3.openblue.api.Brand.HYUNDAI_USA
+
+    /** Cached status from whichever backend the account belongs to. */
+    private suspend fun fetchCached(id: String) = if (isUs) usa.cachedStatus(id) else api.cachedStatus(id)
+
     private val prettyJson = Json { prettyPrint = true }
 
     var screen by mutableStateOf<Screen>(Screen.Login)
@@ -174,12 +181,12 @@ class MainViewModel(
         if (online && screen == Screen.Main && v != null) {
             runCatching {
                 io.github.alamo3.openblue.work.Notifier.createChannels(getApplication())
-                StatusWatchWorker.sync(getApplication(), store)
+                if (!isUs) StatusWatchWorker.sync(getApplication(), store)
             }
             refreshing = true
             launchSafely(onDone = { refreshing = false }) {
                 loadVehicle(v)
-                serverPresets = api.serverPresets(v.id, tempTable)
+                serverPresets = if (isUs) emptyList() else api.serverPresets(v.id, tempTable)
             }
         }
     }
@@ -242,7 +249,7 @@ class MainViewModel(
         pendingUser = user.trim()
         pendingPass = pass
         pendingPin = pin.trim()
-        when (val r = api.login(user.trim(), pass)) {
+        when (val r = if (brand == io.github.alamo3.openblue.api.Brand.HYUNDAI_USA) usa.login(user.trim(), pass) else api.login(user.trim(), pass)) {
             is LoginResult.NeedsOtp -> screen = Screen.Otp(r.challenge)
             LoginResult.Success -> finishLogin()
         }
@@ -279,7 +286,7 @@ class MainViewModel(
             screen = Screen.Main
             return
         }
-        val list = api.vehicles()
+        val list = if (isUs) usa.vehicles() else api.vehicles()
         when {
             list.isEmpty() -> message = "This Bluelink account has no vehicles"
             list.size == 1 -> chooseVehicleNow(list.first())
@@ -288,7 +295,7 @@ class MainViewModel(
     }
 
     fun changeVehicle() = task("Loading vehicles") {
-        screen = Screen.PickVehicle(api.vehicles())
+        screen = Screen.PickVehicle(if (isUs) usa.vehicles() else api.vehicles())
     }
 
     fun chooseVehicle(v: VehicleInfo) = task("Loading ${v.nickname}") { chooseVehicleNow(v) }
@@ -313,7 +320,7 @@ class MainViewModel(
         }
         screen = Screen.Main
         try {
-            serverPresets = api.serverPresets(v.id, tempTable)
+            serverPresets = if (isUs) emptyList() else api.serverPresets(v.id, tempTable)
         } catch (e: ApiException) {
             // Presets are optional; the Climate tab offers a reload.
         }
@@ -321,6 +328,14 @@ class MainViewModel(
 
     /** sltvhcl: capabilities + status in one call; falls back to the plain status call. */
     private suspend fun loadVehicle(v: VehicleInfo) {
+        if (isUs) {
+            // USA: capabilities come from enrollment details; status from vehicleStatus.
+            val c = usa.capsFor(v)
+            store.caps = c
+            caps = c
+            applyStatus(usa.cachedStatus(v.id))
+            return
+        }
         val selected = api.selectVehicle(v.id)
         val c = api.capsFrom(selected)
         store.caps = c
@@ -410,7 +425,7 @@ class MainViewModel(
         if (refreshing) return
         refreshing = true
         launchSafely(onDone = { refreshing = false }) {
-            applyStatus(api.cachedStatus(v.id))
+            applyStatus(fetchCached(v.id))
         }
         refreshWeather()
     }
@@ -426,7 +441,7 @@ class MainViewModel(
         val action = CommandProgress.Action.WAKE
         showProgress(CommandProgress(action, CommandProgress.Stage.WAITING, "This can take up to a minute."))
         launchSafely(onError = { finish(action, false, describe(it)) }) {
-            applyStatus(api.liveStatus(v.id))
+            applyStatus(if (isUs) usa.liveStatus(v.id) else api.liveStatus(v.id))
             finish(action, true)
         }
     }
@@ -480,6 +495,13 @@ class MainViewModel(
      * Leaves the latest status in [status] either way.
      */
     private suspend fun awaitCommand(v: VehicleInfo, tx: String, action: CommandProgress.Action): CommandResult {
+        if (isUs) {
+            // USA v1: poll in the foreground (no CommandWorker path yet); an empty tx means
+            // the command was accepted with an empty-body 200 and returns SUCCESS at once.
+            val r = usa.awaitResult(v.id, tx)
+            runCatching { applyStatus(usa.cachedStatus(v.id)) }
+            return r
+        }
         if (!online) {
             val r = api.awaitResult(v.id, tx)
             runCatching { applyStatus(api.cachedStatus(v.id)) }
@@ -499,11 +521,11 @@ class MainViewModel(
         }
     }
 
-    fun lock() = command(CommandProgress.Action.LOCK, { it.copy(locked = true) }) { api.lock(it.id) }
-    fun unlock() = command(CommandProgress.Action.UNLOCK, { it.copy(locked = false) }) { api.unlock(it.id) }
+    fun lock() = command(CommandProgress.Action.LOCK, { it.copy(locked = true) }) { if (isUs) usa.lock(it.id) else api.lock(it.id) }
+    fun unlock() = command(CommandProgress.Action.UNLOCK, { it.copy(locked = false) }) { if (isUs) usa.unlock(it.id) else api.unlock(it.id) }
     fun stopClimate() = command(CommandProgress.Action.CLIMATE_STOP, {
         it.copy(climateOn = false, defrost = false, wheelHeat = false, seats = listOf(2, 2, 2, 2))
-    }) { api.stopClimate(it.id) }
+    }) { if (isUs) usa.stopClimate(it.id) else api.stopClimate(it.id) }
 
     /** Climate settings waiting for the user to confirm seats that don't suit the weather. */
     var pendingClimate by mutableStateOf<ClimateSettings?>(null)
@@ -529,7 +551,7 @@ class MainViewModel(
                 climateOn = fixed.climateOn, tempC = fixed.tempC, defrost = fixed.defrost,
                 wheelHeat = fixed.heating != 0, seats = fixed.seats.map { s -> if (s == 0) 2 else s },
             )
-        }) { api.startClimate(it, fixed) }
+        }) { if (isUs) usa.startClimate(it, fixed) else api.startClimate(it, fixed) }
     }
 
     // ------------------------------------------------- public charging (read-only)
@@ -1223,7 +1245,7 @@ class MainViewModel(
         }
         showProgress(CommandProgress(action, CommandProgress.Stage.WAITING, "This can take up to a minute."))
         launchSafely(onError = { finish(action, false, describe(it)) }) {
-            val loc = api.locate(v.id, isEv = v.fuelKindCode.equals("E", ignoreCase = true))
+            val loc = if (isUs) usa.locate(v.id) else api.locate(v.id, isEv = v.fuelKindCode.equals("E", ignoreCase = true))
             store.lastLocation = loc
             location = loc
             finish(action, true)
@@ -1232,18 +1254,18 @@ class MainViewModel(
     }
 
     fun hornLights(horn: Boolean) = command(if (horn) CommandProgress.Action.HORN else CommandProgress.Action.LIGHTS) {
-        api.hornLights(it.id, horn)
+        if (isUs) usa.hornLights(it.id, horn) else api.hornLights(it.id, horn)
     }
 
     fun chargePort(open: Boolean) = command(
         if (open) CommandProgress.Action.PORT_OPEN else CommandProgress.Action.PORT_CLOSE,
         { it.copy(chargePortOpen = open) },
-    ) { api.chargePort(it.id, open) }
+    ) { if (isUs) throw ApiException(null, "Charge-port control isn't available for Hyundai USA yet") else api.chargePort(it.id, open) }
 
     fun batteryPreconditioning(on: Boolean) = command(
         if (on) CommandProgress.Action.PRECONDITION_ON else CommandProgress.Action.PRECONDITION_OFF,
         { it.copy(preconditioning = on) },
-    ) { api.batteryPreconditioning(it.id, on) }
+    ) { if (isUs) throw ApiException(null, "Battery preconditioning isn't available for Hyundai USA yet") else api.batteryPreconditioning(it.id, on) }
 
     /** Saves AC and DC charge limits (percent, steps of 10). */
     fun setChargeLimits(ac: Int, dc: Int) {
@@ -1256,7 +1278,7 @@ class MainViewModel(
         }
         showProgress(CommandProgress(action, CommandProgress.Stage.SENDING))
         launchSafely(onError = { finish(action, false, describe(it)) }) {
-            val tx = api.setChargeLimits(v.id, ac, dc)
+            val tx: String? = if (isUs) usa.setChargeLimits(v.id, ac, dc) else api.setChargeLimits(v.id, ac, dc)
             if (tx != null) {
                 showProgress(CommandProgress(action, CommandProgress.Stage.WAITING))
                 when (awaitCommand(v, tx, action)) {
@@ -1267,7 +1289,7 @@ class MainViewModel(
             } else {
                 finish(action, true, "The car picks them up next time it connects.")
                 try {
-                    applyStatus(api.cachedStatus(v.id))
+                    applyStatus(fetchCached(v.id))
                 } catch (e: ApiException) {
                     // The limits are saved; the status will catch up on the next refresh.
                 }
@@ -1503,7 +1525,7 @@ class MainViewModel(
 
     fun loadPresets() {
         val v = vehicle ?: return
-        task("Loading presets") { serverPresets = api.serverPresets(v.id, tempTable) }
+        task("Loading presets") { serverPresets = if (isUs) emptyList() else api.serverPresets(v.id, tempTable) }
     }
 
     fun saveLocalPreset(name: String) {
@@ -2052,13 +2074,13 @@ class MainViewModel(
         watchEnabled = on
         // Start fresh, so a state that was already there doesn't count as a change.
         if (on) store.watchMemory = io.github.alamo3.openblue.work.WatchMemory()
-        if (online) StatusWatchWorker.sync(getApplication(), store, replace = true)
+        if (online && !isUs) StatusWatchWorker.sync(getApplication(), store, replace = true)
     }
 
     fun changeWatchMinutes(minutes: Int) {
         store.watchMinutes = minutes
         watchMinutes = minutes
-        if (online) StatusWatchWorker.sync(getApplication(), store, replace = true)
+        if (online && !isUs) StatusWatchWorker.sync(getApplication(), store, replace = true)
     }
 
     fun changeAlert(kind: AlertKind, on: Boolean) {

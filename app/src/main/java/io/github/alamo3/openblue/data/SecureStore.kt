@@ -70,6 +70,10 @@ class SecureStore(private val prefs: SharedPreferences) {
     var accessToken: String?
         get() = read("accessToken")
         set(v) = write("accessToken", v)
+    /** OAuth refresh token (USA client only; Canada re-logins instead). Rotates on every refresh. */
+    var refreshToken: String?
+        get() = read("refreshToken")
+        set(v) = write("refreshToken", v)
     var tokenExpiresAt: Long
         get() = prefs.getLong("tokenExpiresAt", 0L)
         set(v) = prefs.edit().putLong("tokenExpiresAt", v).apply()

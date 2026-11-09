@@ -11,3 +11,6 @@ build/
 *.aab
 *.jks
 *.keystore
+
+# US fork working files (reference clones, not part of the app)
+research/

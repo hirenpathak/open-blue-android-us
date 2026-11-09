@@ -27,7 +27,18 @@ enum class Brand(
     KIA(
         "Kia", "Kia", "Kia Connect", "kiaconnect.ca", null,
         "HATAHSPACA0232141ED9722C67715A0B", "CLISCR01AHSPA", hasStore = false, hasInAppCharging = false,
+    ),
+    /**
+     * Hyundai USA: a different backend entirely (telematics API, OAuth login, PIN as a header).
+     * Served by [UsaBluelinkClient], NOT by the tods paths in [BluelinkClient]; baseUrl is unused
+     * for this entry. The client id/secret are the public values embedded in the MyHyundai app.
+     */
+    HYUNDAI_USA(
+        "Hyundai USA", "Hyundai", "Bluelink", "api.telematics.hyundaiusa.com", "H",
+        "m66129Bb-em93-SPAHYN-bZ91-am4540zp19920", "v558o935-6nne-423i-baa8",
+        hasStore = false, hasInAppCharging = false,
     );
 
-    val baseUrl: String get() = "https://$host/tods/api/"
+    val baseUrl: String
+        get() = if (this == HYUNDAI_USA) "https://$host/ac/v2/" else "https://$host/tods/api/"
 }

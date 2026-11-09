@@ -14,6 +14,8 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import io.github.alamo3.openblue.CommandProgress
 import io.github.alamo3.openblue.api.BluelinkClient
+import io.github.alamo3.openblue.api.Brand
+import io.github.alamo3.openblue.api.UsaBluelinkClient
 import io.github.alamo3.openblue.api.ClimateSettings
 import io.github.alamo3.openblue.api.VehicleCaps
 import io.github.alamo3.openblue.api.forCar
@@ -80,6 +82,8 @@ class WidgetCommandWorker(context: Context, params: WorkerParameters) : Coroutin
             return Result.success()
         }
         val api = BluelinkClient(store)
+        val isUs = store.brand == Brand.HYUNDAI_USA
+        val usa = if (isUs) UsaBluelinkClient(store) else null
         val car = v.nickname.ifBlank { "Your car" }
         val action = WidgetAction.actionFor(what)
         val chosen = inputData.getString(KEY_SETTINGS)?.let { runCatching { Json.decodeFromString<ClimateSettings>(it) }.getOrNull() }
@@ -88,15 +92,22 @@ class WidgetCommandWorker(context: Context, params: WorkerParameters) : Coroutin
         try {
             if (action == null) {
                 // Refresh: what Bluelink already has, without waking the car.
-                store.cachedStatus = api.cachedStatus(v.id).toString()
+                store.cachedStatus = (if (isUs) usa!!.cachedStatus(v.id) else api.cachedStatus(v.id)).toString()
             } else {
+                val settings = (chosen ?: store.lastClimate ?: ClimateSettings()).forCar(store.caps ?: VehicleCaps())
                 val tx = when (action) {
-                    CommandProgress.Action.LOCK -> api.lock(v.id)
-                    CommandProgress.Action.CLIMATE_STOP -> api.stopClimate(v.id)
-                    else -> api.startClimate(v, (chosen ?: store.lastClimate ?: ClimateSettings()).forCar(store.caps ?: VehicleCaps()))
+                    CommandProgress.Action.LOCK -> if (isUs) usa!!.lock(v.id) else api.lock(v.id)
+                    CommandProgress.Action.CLIMATE_STOP -> if (isUs) usa!!.stopClimate(v.id) else api.stopClimate(v.id)
+                    else -> if (isUs) usa!!.startClimate(v, settings) else api.startClimate(v, settings)
                 }
-                CommandWorker.enqueue(applicationContext, v.id, tx, action, car)
-                return Result.success()  // CommandWorker clears the pending note when the car answers
+                if (isUs) {
+                    // USA v1: poll here instead of CommandWorker (which speaks the Canada API).
+                    usa!!.awaitResult(v.id, tx)
+                    runCatching { store.cachedStatus = usa.cachedStatus(v.id).toString() }
+                } else {
+                    CommandWorker.enqueue(applicationContext, v.id, tx, action, car)
+                    return Result.success()  // CommandWorker clears the pending note when the car answers
+                }
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

@@ -81,7 +81,11 @@ fun LoginScreen(vm: MainViewModel) {
         Spacer(Modifier.height(56.dp))
         Text("Open Blue", style = MaterialTheme.typography.displayMedium)
         Text(
-            "Sign in with your ${brand.serviceName} Canada account, the same one you use on ${brand.host}.",
+            if (brand == Brand.HYUNDAI_USA) {
+                "Sign in with your MyHyundai account (USA), the same one you use in the MyHyundai app."
+            } else {
+                "Sign in with your ${brand.serviceName} Canada account, the same one you use on ${brand.host}."
+            },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
