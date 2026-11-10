@@ -1,3 +1,23 @@
+# Open Blue — USA fork 🇺🇸
+
+> **This fork adds experimental Hyundai USA support to Open Blue** (upstream is Canada-only).
+> Pick **Hyundai USA** on the sign-in screen and use your MyHyundai email, password and Bluelink PIN.
+> Your credentials are only ever sent to Hyundai and stored in the app's encrypted on-device store — same as upstream.
+>
+> **Status (Nov 2026), tested on a 2022 IONIQ 5 SEL (US):**
+> - ✅ Sign-in, vehicle list, live + cached status: battery %, range, charging state and charge limits, doors/locks state, odometer, location
+> - ✅ Climate screen in **Fahrenheit** for US accounts
+> - ⚠️ Remote commands (lock/unlock, climate start/stop, horn & lights): requests reach Hyundai and are logged in the official app's activity history, but on the test car they currently report failure at the execution step — under active debugging; results on other US cars are exactly what we need testers for
+> - ⚠️ US Bluelink is rate-limited (roughly 30 calls/day per account) — this fork does **not** run the background status watcher for US accounts, and every refresh counts
+> - Not yet for USA: charge-port open/close, battery preconditioning, climate schedules screen
+>
+> Technical notes for developers: [`US_API_MAP.md`](US_API_MAP.md) (US endpoint/header map, derived from `hyundai_kia_connect_api` and BlueDeck) and [`FORK_NOTES_US.md`](FORK_NOTES_US.md) (design + build notes).
+> US testers welcome — please open an issue with your model/year and what worked. The goal is to upstream this once commands are verified.
+>
+> Not affiliated with Hyundai. Use at your own risk; you are responsible for your own Bluelink account.
+
+---
+
 # Open Blue
 
 A small, personal, **unofficial** Android client for Hyundai **Bluelink Canada** (mybluelink.ca), written in Kotlin + Jetpack Compose.
