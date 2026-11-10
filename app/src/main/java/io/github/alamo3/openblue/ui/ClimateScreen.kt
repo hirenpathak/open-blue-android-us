@@ -75,6 +75,15 @@ fun ClimateScreen(vm: MainViewModel, onBack: () -> Unit) {
     val st = vm.status?.let { CarStatus.from(it, vm.tempTable) }
     val running = st?.climateOn == true
     val temps = vm.tempTable.filterNot { it.isLimit }.mapNotNull { it.celsiusValue }.distinct().sorted()
+    // Hyundai USA accounts think in Fahrenheit: the temp table carries both scales, so
+    // render the Fahrenheit label of the entry nearest the Celsius working value.
+    val usF = vm.isUs
+    fun disp(c: Double): String = if (usF) {
+        vm.tempTable.filterNot { it.isLimit }
+            .minByOrNull { kotlin.math.abs((it.celsiusValue ?: 0.0) - c) }?.fahrenheit
+            ?: ClimateSettings.fmt(c * 9.0 / 5.0 + 32.0)
+    } else ClimateSettings.fmt(c)
+    val unit = if (usF) "°F" else "°C"
     var saving by remember { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(Unit) { vm.refreshWeather() }
 
@@ -85,7 +94,7 @@ fun ClimateScreen(vm: MainViewModel, onBack: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (running) "Climate is on" + (st?.setTempC?.let { " at ${ClimateSettings.fmt(it)} °C" } ?: "")
+                if (running) "Climate is on" + (st?.setTempC?.let { " at ${disp(it)} $unit" } ?: "")
                 else "Climate is off",
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (running) (if (e.tempC >= 20) app.heat else app.cool) else scheme.onSurfaceVariant,
@@ -108,7 +117,7 @@ fun ClimateScreen(vm: MainViewModel, onBack: () -> Unit) {
                     modifier = Modifier.weight(1f),
                 ) { t ->
                     Text(
-                        "${ClimateSettings.fmt(t)}°",
+                        "${disp(t)}°",
                         style = MaterialTheme.typography.displayLarge,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
