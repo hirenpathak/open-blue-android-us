@@ -48,6 +48,11 @@ class UsaBluelinkClient(private val store: SecureStore) {
         private const val US_CLIENT_ID = "m66129Bb-em93-SPAHYN-bZ91-am4540zp19920"
         private const val US_CLIENT_SECRET = "v558o935-6nne-423i-baa8"
 
+        // Mobile-app identity the US gateway expects on API calls (from BlueDeck's working
+        // Android client, BluelinkConstants.APP_ID). Without it, rcs/* calls are rejected
+        // with "Please check to see that all required fields are populated and try again."
+        private const val US_APP_ID = "14d5efbe-c194-4a5c-af66-e0ba8c8f4c80"
+
         private const val HOST = "https://api.telematics.hyundaiusa.com"
         private const val TOKEN_URL = "$HOST/v2/ac/oauth/token"
         private const val API_BASE = "$HOST/ac/v2/"
@@ -111,6 +116,8 @@ class UsaBluelinkClient(private val store: SecureStore) {
             .header("Content-Type", "application/json")
             .header("client_id", US_CLIENT_ID)
             .header("clientSecret", US_CLIENT_SECRET)
+            .header("appId", US_APP_ID)
+            .header("deviceType", "Android")
             .header("from", "SPA")
             .header("to", "ISS")
             .header("language", "0")
@@ -168,6 +175,9 @@ class UsaBluelinkClient(private val store: SecureStore) {
         val h = mutableMapOf(
             "username" to (store.username.orEmpty()),
             "accessToken" to (store.accessToken.orEmpty()),
+            // BlueDeck (the working Android client) names this header with an underscore;
+            // the Python client uses accessToken. Send both — the gateway reads one of them.
+            "access_token" to (store.accessToken.orEmpty()),
         )
         store.pin?.takeIf { it.isNotBlank() }?.let { h["blueLinkServicePin"] = it }
         return h
@@ -383,7 +393,9 @@ class UsaBluelinkClient(private val store: SecureStore) {
         // After a process restart the details cache is empty and the vin/gen headers would
         // go out blank; enrollment is one call and is cached for the process lifetime.
         if (!detailsCache.containsKey(vehicleId)) detailsFor(vehicleId)
-        val headers = vehicleHeaders(vehicleId) + if (refresh) mapOf("REFRESH" to "true") else emptyMap()
+        val vh0 = vehicleHeaders(vehicleId)
+        lastDiag = "sent vinLen=${vh0["vin"]?.length ?: 0} gen=${vh0["gen"]} regLen=${vh0["registrationId"]?.length ?: 0} pinSet=${!store.pin.isNullOrBlank()} tokSet=${!store.accessToken.isNullOrBlank()}"
+        val headers = vh0 + mapOf("REFRESH" to if (refresh) "true" else "false")
         val reply = request("GET", "${API_BASE}rcs/rvs/vehicleStatus", null, headers)
         diag(if (refresh) "liveStatus" else "cachedStatus", reply.body)
         val vs = (reply.body["vehicleStatus"] as? JsonObject) ?: reply.body

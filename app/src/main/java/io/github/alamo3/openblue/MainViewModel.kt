@@ -333,7 +333,12 @@ class MainViewModel(
             val c = usa.capsFor(v)
             store.caps = c
             caps = c
-            applyStatus(usa.cachedStatus(v.id))
+            try {
+                applyStatus(usa.cachedStatus(v.id))
+            } catch (e: Exception) {
+                message = "${describe(e)} [${usa.lastDiag ?: "no diag"}]"
+                return
+            }
             // Diagnostic (v2): if the status arrived but carries no battery reading, say so
             // on screen with the server's reply shape instead of silently showing dashes.
             val evNow = realStatus?.get("evStatus") as? JsonObject
