@@ -139,14 +139,16 @@ fun HomeScreen(vm: MainViewModel, open: (Route) -> Unit, onUnlock: () -> Unit) {
                     val climateOn = st?.climateOn == true
                     RoundControl(
                         icon = Icons.Rounded.Air,
-                        label = if (climateOn) (st?.setTempC?.let { "${ClimateSettings.fmt(it)}° on" } ?: "On") else "Climate",
+                        label = if (climateOn) (st?.setTempC?.let { c ->
+                            if (vm.isUs) "${ClimateSettings.fmt(c * 9.0 / 5.0 + 32.0)}° on" else "${ClimateSettings.fmt(c)}° on"
+                        } ?: "On") else "Climate",
                         active = climateOn,
                         tint = if ((st?.setTempC ?: vm.editor.tempC) >= 20) app.heat else app.cool,
                         onClick = { open(Route.Climate) },
                         onLongClick = { if (vm.canAct) { if (climateOn) vm.stopClimate() else vm.startClimate() } },
                     )
                 }
-                if (isEv) add {
+                if (isEv && !vm.isUs) add {
                     val portOpen = st?.chargePortOpen == true
                     RoundControl(
                         icon = Icons.Rounded.EvStation,

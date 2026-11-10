@@ -205,7 +205,8 @@ class MainViewModel(
 
     private fun describe(e: Throwable): String = when (e) {
         is ApiException -> e.message ?: "Bluelink returned an error"
-        is IOException -> "Couldn't reach Bluelink. Check your connection and try again."
+        is IOException -> "Couldn't reach Bluelink. Check your connection and try again." +
+            if (isUs) usa.lastDiag?.let { " [$it]" } ?: "" else ""
         else -> e.message ?: e.toString()
     }
 
@@ -421,6 +422,11 @@ class MainViewModel(
     private fun applyStatus(s: JsonObject) {
         realStatus = s
         store.cachedStatus = s.toString()
+        // USA: if the status envelope carried the car's coordinates, seed the
+        // map from them — no rate-limited findMyCar call needed.
+        if (isUs && location == null) {
+            usa.lastStatusCoord?.let { location = it; store.lastLocation = it }
+        }
         updateWidgets()
     }
 
@@ -510,7 +516,11 @@ class MainViewModel(
             // USA v1: poll in the foreground (no CommandWorker path yet); an empty tx means
             // the command was accepted with an empty-body 200 and returns SUCCESS at once.
             val r = usa.awaitResult(v.id, tx)
+            val cmdDiag = usa.lastDiag
             runCatching { applyStatus(usa.cachedStatus(v.id)) }
+            // The status refresh overwrites lastDiag; the failure note must show the
+            // command/poll diag, not the (successful) status fetch that followed it.
+            if (r != CommandResult.SUCCESS) usa.lastDiag = cmdDiag
             return r
         }
         if (!online) {
@@ -1167,7 +1177,7 @@ class MainViewModel(
     }
 
     /** The car's last known location; [locate] asks the car for a fresh one. */
-    var location by mutableStateOf(store.lastLocation)
+    var location by mutableStateOf(store.lastLocation?.takeUnless { it.lat == 0.0 && it.lon == 0.0 })
         private set
 
     fun dismissPendingClimate() { pendingClimate = null }

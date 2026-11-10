@@ -36,7 +36,10 @@ data class Release(
  * installs from Open Blue); after that Android lets the app update itself without asking.
  */
 object Updater {
-    private const val BASE = "https://github.com/alamo3/open-blue-android/releases/download/latest/"
+    // US fork: updates come from the fork's own releases. There is no rolling
+    // "latest" release there yet, so the check quietly finds nothing instead
+    // of offering the upstream Canada build.
+    private const val BASE = "https://github.com/hirenpathak/open-blue-android-us/releases/download/latest/"
     const val ACTION_STATUS = "io.github.alamo3.openblue.UPDATE_STATUS"
 
     private val http = OkHttpClient.Builder().followRedirects(true).readTimeout(60, TimeUnit.SECONDS).build()

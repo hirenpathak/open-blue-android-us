@@ -82,6 +82,9 @@ class UsaBluelinkClient(private val store: SecureStore) {
      * notes so a screenshot shows what Hyundai actually answered. Never holds credentials.
      */
     @Volatile var lastDiag: String? = null
+
+    /** Coordinates captured from a status envelope, when Hyundai includes them. */
+    @Volatile var lastStatusCoord: CarLocation? = null
         private set
 
     private fun diag(tag: String, body: JsonObject) {
@@ -133,7 +136,19 @@ class UsaBluelinkClient(private val store: SecureStore) {
             builder.post(body?.toString()?.toRequestBody(jsonMedia) ?: ByteArray(0).toRequestBody(null))
         }
 
-        http.newCall(builder.build()).execute().use { resp ->
+        try {
+            executeCall(builder)
+        } catch (e: java.io.IOException) {
+            // Transport-level failure (timeout, reset, DNS): record the exact cause so the
+            // failure note can name it instead of a generic "couldn't reach".
+            lastDiag = "io ${e.javaClass.simpleName}: ${e.message}"
+            throw e
+        }
+    }
+
+    private fun executeCall(builder: Request.Builder): Reply {
+        val resp = http.newCall(builder.build()).execute()
+        try {
             val text = resp.body?.string().orEmpty()
             val parsed = if (text.isBlank()) {
                 JsonObject(emptyMap())
@@ -148,7 +163,9 @@ class UsaBluelinkClient(private val store: SecureStore) {
             if (!resp.isSuccessful) {
                 throw ApiException(resp.code.toString(), "Hyundai USA request failed (HTTP ${resp.code})")
             }
-            Reply(parsed, resp.headers)
+            return Reply(parsed, resp.headers)
+        } finally {
+            resp.close()
         }
     }
 
@@ -399,6 +416,13 @@ class UsaBluelinkClient(private val store: SecureStore) {
         val reply = request("GET", "${API_BASE}rcs/rvs/vehicleStatus", null, headers)
         diag(if (refresh) "liveStatus" else "cachedStatus", reply.body)
         val vs = (reply.body["vehicleStatus"] as? JsonObject) ?: reply.body
+        // Coordinates can ride outside vehicleStatus (a locationAccessInfo
+        // block). Capture them so the view model can seed the map without
+        // spending a rate-limited findMyCar call.
+        extractCoord(reply.body)?.let { lastStatusCoord = it }
+        (reply.body["locationAccessInfo"] as? JsonObject)?.let { lai ->
+            lastDiag = (lastDiag ?: "") + " | lai keys=[${lai.keys.take(10).joinToString(",")}]"
+        }
         val out = translateStatus(vs, infoFor(vehicleId))
         val ev = out["evStatus"] as? JsonObject
         if (ev?.int("batteryStatus") == null) {
@@ -489,7 +513,7 @@ class UsaBluelinkClient(private val store: SecureStore) {
         val coord = (loc?.get("coord") as? JsonObject) ?: loc
         val lat = coord?.dbl("lat")
         val lon = coord?.dbl("lon")
-        if (lat != null && lon != null) {
+        if (lat != null && lon != null && !(lat == 0.0 && lon == 0.0)) {
             return@authed CarLocation(
                 lat = lat,
                 lon = lon,
@@ -500,13 +524,45 @@ class UsaBluelinkClient(private val store: SecureStore) {
         }
         val reply = request("GET", "${API_BASE}rcs/rfc/findMyCar", null, vehicleHeaders(vehicleId))
         val c = (reply.body["coord"] as? JsonObject) ?: reply.body
+        val flat = c.dbl("lat") ?: throw ApiException("location", "Hyundai USA didn't return a location")
+        val flon = c.dbl("lon") ?: throw ApiException("location", "Hyundai USA didn't return a location")
+        // Hyundai answers with a (0, 0) placeholder when find-my-car is
+        // rate-limited; never save it as the car's position.
+        if (flat == 0.0 && flon == 0.0) {
+            throw ApiException("location", "Hyundai USA returned a placeholder location — try again in a bit")
+        }
         CarLocation(
-            lat = c.dbl("lat") ?: throw ApiException("location", "Hyundai USA didn't return a location"),
-            lon = c.dbl("lon") ?: throw ApiException("location", "Hyundai USA didn't return a location"),
+            lat = flat,
+            lon = flon,
             heading = reply.body.dbl("head") ?: reply.body.dbl("heading"),
             time = null,
             fetchedAt = System.currentTimeMillis(),
         )
+    }
+
+    /**
+     * Best-effort coordinate probe over a status envelope: vehicleStatus.coord,
+     * vehicleStatus.vehicleLocation.coord, or the locationAccessInfo block.
+     * (0, 0) placeholders are rejected.
+     */
+    private fun extractCoord(env: JsonObject): CarLocation? {
+        val vs = (env["vehicleStatus"] as? JsonObject) ?: env
+        val candidates = listOfNotNull(
+            vs["coord"] as? JsonObject,
+            (vs["vehicleLocation"] as? JsonObject)?.get("coord") as? JsonObject,
+            vs["vehicleLocation"] as? JsonObject,
+            (env["locationAccessInfo"] as? JsonObject)?.get("coord") as? JsonObject,
+            env["locationAccessInfo"] as? JsonObject,
+        )
+        for (cand in candidates) {
+            val lat = cand.dbl("lat") ?: cand.dbl("latitude")
+            val lon = cand.dbl("lon") ?: cand.dbl("lng") ?: cand.dbl("longitude")
+            if (lat != null && lon != null && !(lat == 0.0 && lon == 0.0)) {
+                return CarLocation(lat, lon, heading = cand.dbl("head") ?: cand.dbl("heading"),
+                    time = cand.str("time"), fetchedAt = System.currentTimeMillis())
+            }
+        }
+        return null
     }
 
     // ------------------------------------------------------------------ commands

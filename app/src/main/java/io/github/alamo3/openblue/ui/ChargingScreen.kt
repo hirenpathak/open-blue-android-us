@@ -80,7 +80,8 @@ fun ChargingScreen(vm: MainViewModel, onBack: () -> Unit, open: (Route) -> Unit 
                 )
             }
 
-            // Charge port
+            // Charge port — hidden for Hyundai USA (no such control on the US API yet).
+            if (!vm.isUs) {
             HorizontalDivider(color = app.hairline, modifier = Modifier.padding(top = 20.dp))
             SectionTitle("Charge port")
             val portOpen = st?.chargePortOpen
@@ -104,6 +105,7 @@ fun ChargingScreen(vm: MainViewModel, onBack: () -> Unit, open: (Route) -> Unit 
                 } else {
                     ActionPill(if (portOpen) "Close" else "Open", enabled = vm.canAct) { vm.chargePort(open = !portOpen) }
                 }
+            }
             }
 
             // Charge limits
@@ -135,7 +137,8 @@ fun ChargingScreen(vm: MainViewModel, onBack: () -> Unit, open: (Route) -> Unit 
                 ActionPill("Save limits", enabled = changed && vm.canAct) { vm.setChargeLimits(ac, dc) }
             }
 
-            // Preconditioning
+            // Preconditioning — hidden for Hyundai USA (not on the US API yet).
+            if (!vm.isUs) {
             HorizontalDivider(color = app.hairline, modifier = Modifier.padding(top = 20.dp))
             SectionTitle("Battery preconditioning")
             val pre = st?.preconditioning
@@ -146,6 +149,7 @@ fun ChargingScreen(vm: MainViewModel, onBack: () -> Unit, open: (Route) -> Unit 
                     if (pre == null) " The car doesn't report whether it's on." else "",
                 pre == true,
             ) { on -> if (vm.canAct) vm.batteryPreconditioning(on) }
+            }
 
             // Hyundai's charging service (read-only for now); Kia has no in-app charging.
             if (vm.brand.hasInAppCharging) {
