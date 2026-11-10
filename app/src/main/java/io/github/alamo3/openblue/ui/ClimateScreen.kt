@@ -166,7 +166,7 @@ fun ClimateScreen(vm: MainViewModel, onBack: () -> Unit) {
             )
             vm.weather?.let { w ->
                 if (seatWarning == null) Text(
-                    "${ClimateSettings.fmt(Math.round(w.tempC).toDouble())}° outside" + (if (vm.weatherNearPhone) " near you" else "") +
+                    "${ClimateSettings.fmt(Math.round(if (usF) w.tempC * 9.0 / 5.0 + 32.0 else w.tempC).toDouble())}° outside" + (if (vm.weatherNearPhone) " near you" else "") +
                         w.summary.takeIf { it.isNotBlank() }?.let { ", ${it.lowercase()}" }.orEmpty(),
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
