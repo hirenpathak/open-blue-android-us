@@ -71,6 +71,25 @@ class UsaBluelinkClient(private val store: SecureStore) {
     /** transactionId -> getRunningStatus service_type, set when a command is sent. */
     private val serviceTypes = ConcurrentHashMap<String, String>()
 
+    /**
+     * Diagnostic breadcrumb (v2): a one-line summary of the most recent status fetch or
+     * command poll, including the server's own fields. The ViewModel appends it to failure
+     * notes so a screenshot shows what Hyundai actually answered. Never holds credentials.
+     */
+    @Volatile var lastDiag: String? = null
+        private set
+
+    private fun diag(tag: String, body: JsonObject) {
+        val keys = body.keys.take(14).joinToString(",")
+        val bits = listOfNotNull(
+            body.str("errorCode")?.let { "errorCode=$it" },
+            body.str("errorMessage")?.let { "errorMessage=$it" },
+            body.str("status")?.let { "status=$it" },
+            body.str("isBlueLinkServicePinValid")?.let { "pinValid=$it" },
+        ).joinToString(" ")
+        lastDiag = "$tag keys=[$keys] $bits".take(400)
+    }
+
     private class Reply(val body: JsonObject, val headers: Headers)
 
     private fun offsetHours(): String =
@@ -366,8 +385,14 @@ class UsaBluelinkClient(private val store: SecureStore) {
         if (!detailsCache.containsKey(vehicleId)) detailsFor(vehicleId)
         val headers = vehicleHeaders(vehicleId) + if (refresh) mapOf("REFRESH" to "true") else emptyMap()
         val reply = request("GET", "${API_BASE}rcs/rvs/vehicleStatus", null, headers)
+        diag(if (refresh) "liveStatus" else "cachedStatus", reply.body)
         val vs = (reply.body["vehicleStatus"] as? JsonObject) ?: reply.body
-        return translateStatus(vs, infoFor(vehicleId))
+        val out = translateStatus(vs, infoFor(vehicleId))
+        val ev = out["evStatus"] as? JsonObject
+        if (ev?.int("batteryStatus") == null) {
+            lastDiag = (lastDiag ?: "") + " | translated evKeys=[${ev?.keys?.take(14)?.joinToString(",")}] batteryStatus missing"
+        }
+        return out
     }
 
     /**
@@ -489,6 +514,7 @@ class UsaBluelinkClient(private val store: SecureStore) {
         serviceType: String = "REMOTE_POLL",
     ): String {
         val reply = request("POST", API_BASE + path, body, vehicleHeaders(vehicleId))
+        diag("cmd $path", reply.body)
         val tid = extractTid(reply.headers)
         if (tid.isNotBlank()) serviceTypes[tid] = serviceType
         return tid
@@ -606,13 +632,17 @@ class UsaBluelinkClient(private val store: SecureStore) {
                 "login_id" to store.username.orEmpty(),
                 "service_type" to serviceType,
             )
+            var pollBody: JsonObject? = null
             val status = try {
-                authed { request("GET", "${API_BASE}rmt/getRunningStatus", null, headers) }
-                    .body.str("status")?.uppercase()
+                val r = authed { request("GET", "${API_BASE}rmt/getRunningStatus", null, headers) }
+                pollBody = r.body
+                r.body.str("status")?.uppercase()
             } catch (e: ApiException) {
+                lastDiag = "poll threw code=${e.code} msg=${e.message}".take(400)
                 if (e.code == "pin" || e.code == "auth") return CommandResult.FAILED
                 null // transient poll failures (incl. HATA 502) just keep waiting
             }
+            if (status == "ERROR" && pollBody != null) diag("poll", pollBody)
             when (status) {
                 "SUCCESS" -> return CommandResult.SUCCESS
                 "ERROR" -> return CommandResult.FAILED

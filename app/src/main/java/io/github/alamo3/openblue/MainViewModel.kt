@@ -334,6 +334,12 @@ class MainViewModel(
             store.caps = c
             caps = c
             applyStatus(usa.cachedStatus(v.id))
+            // Diagnostic (v2): if the status arrived but carries no battery reading, say so
+            // on screen with the server's reply shape instead of silently showing dashes.
+            val evNow = realStatus?.get("evStatus") as? JsonObject
+            if (evNow?.get("batteryStatus") == null) {
+                message = "Status arrived without battery data. [${usa.lastDiag ?: "no diag"}]"
+            }
             return
         }
         val selected = api.selectVehicle(v.id)
@@ -483,7 +489,7 @@ class MainViewModel(
             showProgress(CommandProgress(action, CommandProgress.Stage.WAITING))
             when (awaitCommand(v, tx, action)) {
                 CommandResult.SUCCESS -> finish(action, true)
-                CommandResult.FAILED -> finish(action, false, "The car didn't accept the command.")
+                CommandResult.FAILED -> finish(action, false, "The car didn't accept the command." + if (isUs) usa.lastDiag?.let { "\n[$it]" } ?: "" else "")
                 CommandResult.TIMEOUT -> finish(action, false, "No answer from the car yet. It may still go through, so check again in a minute.")
             }
         }
