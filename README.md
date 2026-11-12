@@ -15,6 +15,10 @@
 > US testers welcome — please open an issue with your model/year and what worked. The goal is to upstream this once commands are verified.
 >
 > Not affiliated with Hyundai. Use at your own risk; you are responsible for your own Bluelink account.
+>
+> **On an iPhone?** This fork is Android-only, and there's no iOS build of Open Blue — but these projects already work with US Bluelink accounts through the same Hyundai USA API:
+> - [egmp-bluelink-scriptable](https://github.com/andyfase/egmp-bluelink-scriptable) — a Bluelink replacement app for iOS built on the (free) Scriptable app, with home-screen widgets
+> - [Home Assistant + the Kia Uvo / Hyundai Bluelink integration](https://github.com/Hyundai-Kia-Connect/kia_uvo) — full status and control through the Home Assistant iOS app (a HACS custom integration)
 
 ---
 
